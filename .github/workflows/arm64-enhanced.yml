@@ -1,0 +1,56 @@
+name: ARM64 Pull and Save Docker Image (Enhanced)
+
+on:
+  workflow_dispatch:
+    inputs:
+      docker_images:
+        description: '请填写docker镜像名称 多个用英文逗号分开'
+        required: true
+        default: 'alpine:latest,busybox:stable-glibc'
+
+jobs:
+  pull_and_package:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Clean and set image names
+      id: clean_images
+      run: |
+        # 清理镜像名称用于artifact命名
+        clean_name=$(echo "${{ github.event.inputs.docker_images }}" | 
+          sed 's/[^a-zA-Z0-9._-]/-/g' |  # 替换特殊字符为连字符
+          sed 's/^-*//;s/-*$//' |       # 移除首尾的连字符
+          sed 's/--*/-/g' |             # 合并多个连字符
+          cut -c -100)                  # 截断至100字符
+        
+        echo "clean_name=${clean_name}" >> $GITHUB_OUTPUT
+        echo "Using cleaned image name: ${clean_name}"
+
+    - name: Pull Docker Images and Package
+      run: |
+        current_date=$(date +%Y%m%d)
+        mkdir -p docker_temp
+        
+        images="${{ github.event.inputs.docker_images }}"
+        IFS=',' read -r -a image_array <<< "$images"
+        
+        for image in "${image_array[@]}"; do
+          echo "Pulling image: $image"
+          docker pull "$image" --platform "linux/arm64"
+          
+          safe_name=$(echo "$image" | sed 's/[^a-zA-Z0-9._-]/_/g')
+          docker save "$image" -o "docker_temp/${safe_name}.tar"
+        done
+        
+        tar -czvf "docker-arm-images-$current_date.tar.gz" -C docker_temp .
+        rm -rf docker_temp
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-images-${{ steps.clean_images.outputs.clean_name }}-arm64
+        path: docker-arm-images-*.tar.gz
+        retention-days: 1
